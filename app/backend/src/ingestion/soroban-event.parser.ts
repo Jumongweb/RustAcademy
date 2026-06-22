@@ -106,6 +106,18 @@ export class SorobanEventParser {
         return null;
       }
 
+      const contractLedgerSequence = this.extractLedgerSequenceFromData(dataVal);
+      if (
+        contractLedgerSequence !== undefined &&
+        contractLedgerSequence !== raw.ledger
+      ) {
+        this.logger.warn(
+          `Replay metadata mismatch for ${layout.eventName} paging_token=${raw.paging_token}: ` +
+            `contract_ledger_sequence=${contractLedgerSequence} but Horizon ledger=${raw.ledger}. ` +
+            `Event will still be parsed; investigate potential replay tampering.`,
+        );
+      }
+
       const base = {
         schemaVersion,
         topicNamespace: layout.topicNamespace,
@@ -113,6 +125,7 @@ export class SorobanEventParser {
         ledgerSequence: raw.ledger,
         pagingToken: raw.paging_token,
         contractTimestamp: this.extractTimestampFromData(dataVal),
+        contractLedgerSequence,
       };
 
       switch (layout.eventName) {
@@ -511,5 +524,26 @@ export class SorobanEventParser {
       // ignore
     }
     return 0n;
+  }
+
+  /**
+   * Extracts the `ledger_sequence` replay metadata field from the event payload.
+   *
+   * This field is emitted by the contract via `env.ledger().sequence()` and lets
+   * the backend cross-validate the contract-reported ledger against the
+   * Horizon-reported ledger for tamper / mis-routing detection.
+   *
+   * Returns `undefined` for legacy v1 events that pre-date this field.
+   */
+  private extractLedgerSequenceFromData(data: xdr.ScVal): number | undefined {
+    try {
+      const map = this.dataToMap(data);
+      if (map["ledger_sequence"]) {
+        return Number(scValToNative(map["ledger_sequence"]));
+      }
+    } catch {
+      // Optional field — absent in legacy v1 events
+    }
+    return undefined;
   }
 }

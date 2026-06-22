@@ -408,6 +408,7 @@ fn test_event_schema_catalog_locks_canonical_topics_and_payloads() {
             "amount_due",
             "amount_paid",
             "expires_at",
+            "ledger_sequence",
             "schema_version",
             "timestamp",
             "token"
@@ -837,6 +838,8 @@ fn test_event_snapshot_escrow_deposited_schema() {
     assert!(data_map.get(Symbol::new(&env, "amount_paid")).is_some());
     assert!(data_map.get(Symbol::new(&env, "expires_at")).is_some());
     assert!(data_map.get(Symbol::new(&env, "timestamp")).is_some());
+    // Replay metadata: contract-reported ledger sequence for deduplication.
+    assert!(data_map.get(Symbol::new(&env, "ledger_sequence")).is_some());
 }
 
 #[test]

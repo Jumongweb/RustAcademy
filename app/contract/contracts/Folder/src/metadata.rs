@@ -5,7 +5,7 @@
 
 use crate::{
     admin,
-    events::EVENT_SCHEMA_VERSION,
+    events::{EVENT_REPLAY_FIELDS, EVENT_SCHEMA_VERSION},
     storage::{
         self, CURRENT_CONTRACT_VERSION, LEGACY_CONTRACT_VERSION,
     },
@@ -148,4 +148,24 @@ pub fn check_schema_compatibility(
 pub fn pause_flags(env: &Env) -> u64 {
     let key = storage::DataKey::PauseFlags;
     env.storage().persistent().get(&key).unwrap_or(0)
+}
+
+/// Return the canonical replay metadata field names present in every v2+ event payload.
+///
+/// Backends ingesting contract events MUST record all of these fields alongside
+/// the Horizon-provided `transaction_hash` and `paging_token` to form a complete
+/// deduplication key that survives repeated or out-of-order event deliveries:
+///
+/// - `ledger_sequence`: the contract-reported ledger at emission time; backends
+///   SHOULD cross-validate this against the Horizon-reported ledger to detect
+///   tampered or mis-routed event payloads.
+/// - `schema_version`: the event encoding version; parsers use this to select
+///   the correct decoder.
+/// - `timestamp`: the ledger close time in seconds since UNIX epoch.
+pub fn event_replay_fields(env: &Env) -> Vec<Symbol> {
+    let mut fields = Vec::new(env);
+    for field in EVENT_REPLAY_FIELDS {
+        fields.push_back(Symbol::new(env, field));
+    }
+    fields
 }
