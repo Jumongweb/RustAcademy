@@ -5,7 +5,7 @@ import { TutorProfileModule } from './users/tutor-profile.module';
 import { SubmissionModule } from './submissions/submission.module';
 
 @Module({
-  imports: [TutorProfileModule, SubmissionModule],
+  imports: [CourseModule, TutorProfileModule, SubmissionModul,],
   controllers: [AppController],
   providers: [AppService],
 })
