@@ -17,6 +17,8 @@ import { OnboardingModule } from './onboarding/onboarding.module';
 import { LessonModule } from './lessons/lesson.module';
 import { TaskModule } from './tasks/task.module';
 import { LoggingModule } from './logging/logging.module';
+import { AppConfigModule } from './config/config.module';
+import { ContractsModule } from './contracts/contracts.module';
 
 @Module({
   imports: [
@@ -26,6 +28,8 @@ import { LoggingModule } from './logging/logging.module';
         ttl: 60_000,
       },
     ]),
+    AppConfigModule,
+    ContractsModule,
     UserProfileModule,
     TutorProfileModule,
     SubmissionModule,
