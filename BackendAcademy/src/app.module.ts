@@ -20,6 +20,7 @@ import { SocialModule } from './social/social.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { LessonModule } from './lessons/lesson.module';
 import { TaskModule } from './tasks/task.module';
+import { JobsModule } from './jobs/jobs.module';
 import { LoggingModule } from './logging/logging.module';
 import { ProgressModule } from './courses/progress/progress.module';
 import { AppConfigModule } from './config/config.module';
@@ -56,6 +57,7 @@ import { SessionsModule } from './sessions/sessions.module';
     OnboardingModule,
     LessonModule,
     TaskModule,
+    JobsModule,
     LoggingModule,
     PathfindingModule,
     MonitoringModule,
