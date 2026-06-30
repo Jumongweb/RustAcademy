@@ -13,6 +13,7 @@ import { CourseEntity } from './course.entity';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
 import { RestoreRevisionDto } from './dto/restore-revision.dto';
+import { CompleteCourseDto } from './dto/complete-course.dto';
 
 @Controller('courses')
 export class CourseController {
@@ -100,5 +101,8 @@ export class CourseController {
       Number(version),
       dto.revisionAuthor,
     );
+  @Post(':id/complete')
+  async complete(@Param('id') id: string, @Body() dto: CompleteCourseDto) {
+    return this.courseService.completeCourse(id, dto.userId);
   }
 }

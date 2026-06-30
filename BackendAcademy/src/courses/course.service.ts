@@ -8,6 +8,7 @@ import {
 } from './course-revision.entity';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
+import { RewardsService } from '../rewards/rewards.service';
 
 /**
  * Business logic for courses.
@@ -32,6 +33,8 @@ export class CourseService {
     @InjectRepository(CourseRevisionEntity)
     private readonly revisionRepo: Repository<CourseRevisionEntity>,
   ) {}
+
+  constructor(private readonly rewardsService: RewardsService) {}
 
   async create(dto: CreateCourseDto): Promise<CourseEntity> {
     const course = this.courseRepo.create({
@@ -243,5 +246,24 @@ export class CourseService {
     course.updatedAt = new Date();
     await this.courseRepo.save(course);
     return savedRevision;
+  }
+
+  async completeCourse(id: string, userId: string) {
+    const course = this.courses.get(id);
+    if (!course) {
+      throw new NotFoundException(`Course with ID ${id} not found.`);
+    }
+    
+    // Reward the user for completing the course
+    const xpReward = course.xpReward || 50; // Default to 50 XP if not specified
+    const result = this.rewardsService.recordActivity(userId, new Date(), xpReward);
+    
+    return {
+      message: 'Course completed successfully',
+      courseId: id,
+      userId,
+      xpAwarded: xpReward,
+      progression: result,
+    };
   }
 }

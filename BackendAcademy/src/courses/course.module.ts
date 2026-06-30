@@ -7,6 +7,10 @@ import { CourseRevisionEntity } from './course-revision.entity';
 
 @Module({
   imports: [TypeOrmModule.forFeature([CourseEntity, CourseRevisionEntity])],
+import { RewardsModule } from '../rewards/rewards.module';
+
+@Module({
+  imports: [RewardsModule],
   controllers: [CourseController],
   providers: [CourseService],
   exports: [CourseService],
