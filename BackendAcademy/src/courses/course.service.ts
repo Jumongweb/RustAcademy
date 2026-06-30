@@ -1,4 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { CourseEntity } from './course.entity';
 import {
   CourseRevisionEntity,
@@ -7,62 +9,87 @@ import {
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
 
+/**
+ * Business logic for courses.
+ *
+ * Persistence is delegated to injected TypeORM repositories
+ * (`Repository<CourseEntity>` and `Repository<CourseRevisionEntity>`).
+ * Each meaningful course change appends an immutable revision to the
+ * `course_revisions` table so the full version history is preserved as
+ * an append-only audit trail.
+ */
 @Injectable()
 export class CourseService {
-  private readonly courses: Map<string, CourseEntity> = new Map();
-  private readonly revisions: Map<string, CourseRevisionEntity> = new Map();
+  /**
+   * Baseline version assigned to brand-new courses.  Kept as a private
+   * constant so the initial version can never drift away from `1`.
+   */
+  private static readonly INITIAL_VERSION = 1;
+
+  constructor(
+    @InjectRepository(CourseEntity)
+    private readonly courseRepo: Repository<CourseEntity>,
+    @InjectRepository(CourseRevisionEntity)
+    private readonly revisionRepo: Repository<CourseRevisionEntity>,
+  ) {}
 
   async create(dto: CreateCourseDto): Promise<CourseEntity> {
-    const course = new CourseEntity({
+    const course = this.courseRepo.create({
       id: crypto.randomUUID(),
+      version: CourseService.INITIAL_VERSION,
       ...dto,
     });
-    this.courses.set(course.id, course);
-    this.recordRevision(course, 'create', {
+    const saved = await this.courseRepo.save(course);
+    await this.appendRevision(saved, 'create', {
       changeNote: 'Initial version',
     });
-    return course;
+    return saved;
   }
 
   async findAll(): Promise<CourseEntity[]> {
-    return Array.from(this.courses.values()).filter((c) => c.isActive);
+    return this.courseRepo.find({ where: { isActive: true } });
   }
 
   async findByLevel(level: string): Promise<CourseEntity[]> {
-    return Array.from(this.courses.values()).filter(
-      (c) => c.isActive && c.level === level,
-    );
+    return this.courseRepo.find({
+      where: { isActive: true, level: level as CourseEntity['level'] },
+    });
   }
 
   async findById(id: string): Promise<CourseEntity | null> {
-    return this.courses.get(id) || null;
+    return this.courseRepo.findOne({ where: { id } });
   }
 
   async update(id: string, dto: UpdateCourseDto): Promise<CourseEntity | null> {
-    const course = this.courses.get(id);
+    const course = await this.courseRepo.findOne({ where: { id } });
     if (!course) return null;
 
     const previousVersion = course.version;
-    Object.assign(course, dto, {
-      updatedAt: new Date(),
-      version: previousVersion + 1,
-    });
-    this.recordRevision(course, 'update', {
+    course.version = previousVersion + 1;
+    course.updatedAt = new Date();
+    Object.assign(course, dto);
+    const saved = await this.courseRepo.save(course);
+
+    await this.appendRevision(saved, 'update', {
       changeNote: dto.changeNote,
       revisionAuthor: dto.revisionAuthor,
       previousVersion,
     });
-    return course;
+    return saved;
   }
 
   async remove(id: string): Promise<boolean> {
-    const course = this.courses.get(id);
+    const course = await this.courseRepo.findOne({ where: { id } });
     if (!course) return false;
-    this.courses.delete(id);
-    // Revisions are retained in the revisions Map even after the course is
-    // removed so admins can audit what content was previously published.
+    await this.courseRepo.remove(course);
+    // Revisions are intentionally retained so admins can audit what content
+    // was previously published even after the parent course row is gone.
     return true;
   }
+
+  // ---------------------------------------------------------------------------
+  // Revision history API
+  // ---------------------------------------------------------------------------
 
   /**
    * Returns the full revision history for a course, ordered by version ascending.
@@ -70,9 +97,10 @@ export class CourseService {
    * so the audit trail can still be inspected.
    */
   async getRevisions(courseId: string): Promise<CourseRevisionEntity[]> {
-    return Array.from(this.revisions.values())
-      .filter((revision) => revision.courseId === courseId)
-      .sort((a, b) => a.version - b.version);
+    return this.revisionRepo.find({
+      where: { courseId },
+      order: { version: 'ASC' },
+    });
   }
 
   /**
@@ -81,18 +109,15 @@ export class CourseService {
   async getLatestRevision(
     courseId: string,
   ): Promise<CourseRevisionEntity | null> {
-    const courseRevisions = Array.from(this.revisions.values()).filter(
-      (revision) => revision.courseId === courseId,
-    );
-    if (courseRevisions.length === 0) return null;
-    return courseRevisions.reduce((latest, current) =>
-      current.version > latest.version ? current : latest,
-    );
+    return this.revisionRepo.findOne({
+      where: { courseId },
+      order: { version: 'DESC' },
+    });
   }
 
   /**
    * Returns a specific revision by its numeric version for a given course.
-   * Returns null when the course or revision cannot be found.
+   * Returns null when the revision cannot be found.
    */
   async getRevisionByVersion(
     courseId: string,
@@ -104,25 +129,21 @@ export class CourseService {
         message: `Version must be a positive integer`,
       });
     }
-    return (
-      Array.from(this.revisions.values()).find(
-        (revision) =>
-          revision.courseId === courseId && revision.version === version,
-      ) || null
-    );
+    return this.revisionRepo.findOne({ where: { courseId, version } });
   }
 
   /**
-   * Restores the content of a course to a previous revision. The restore
-   * operation itself is recorded as a new revision so the audit trail remains
-   * append-only and the current version always points at the latest revision.
+   * Restores the content of a course to a previous revision.  The restore
+   * operation itself is recorded as a new revision so the audit trail
+   * remains append-only and the current version always points at the
+   * latest revision.
    */
   async restoreRevision(
     courseId: string,
     version: number,
     revisionAuthor?: string,
   ): Promise<CourseEntity | null> {
-    const course = this.courses.get(courseId);
+    const course = await this.courseRepo.findOne({ where: { id: courseId } });
     if (!course) {
       throw new NotFoundException({
         error: 'COURSE_NOT_FOUND',
@@ -153,30 +174,38 @@ export class CourseService {
     course.version = previousVersion + 1;
     course.updatedAt = new Date();
 
-    this.recordRevision(course, 'restore', {
+    const saved = await this.courseRepo.save(course);
+    await this.appendRevision(saved, 'restore', {
       changeNote: `Restored from version ${version}`,
       revisionAuthor,
       previousVersion,
       referenceRevisionId: sourceRevision.id,
     });
-    return course;
+    return saved;
   }
 
   /**
    * Returns the total number of revisions recorded for a course.
    */
   async getRevisionCount(courseId: string): Promise<number> {
-    return Array.from(this.revisions.values()).filter(
-      (revision) => revision.courseId === courseId,
-    ).length;
+    return this.revisionRepo.count({ where: { courseId } });
   }
 
+  // ---------------------------------------------------------------------------
+  // Internals
+  // ---------------------------------------------------------------------------
+
   /**
-   * Internal helper: append a revision representing the current state of the
-   * course. Revisions are immutable once recorded. The course id is used to
-   * scope all subsequent revision lookups.
+   * Persist a new revision snapshot of the course and update the course's
+   * `latestRevisionId` pointer in one round-trip each.
+   *
+   * Returns the saved revision so callers can read its id without an extra
+   * query.  Revisions are immutable once recorded.
+   *
+   * Persistence order is forced by FK constraints: the course must exist
+   * before the revision that references it can be inserted.
    */
-  private recordRevision(
+  private async appendRevision(
     course: CourseEntity,
     reason: CourseRevisionReason,
     options: {
@@ -185,8 +214,8 @@ export class CourseService {
       previousVersion?: number;
       referenceRevisionId?: string;
     } = {},
-  ): CourseRevisionEntity {
-    const revision = new CourseRevisionEntity({
+  ): Promise<CourseRevisionEntity> {
+    const revision = this.revisionRepo.create({
       id: crypto.randomUUID(),
       courseId: course.id,
       version: course.version,
@@ -208,8 +237,11 @@ export class CourseService {
       previousVersion: options.previousVersion,
       referenceRevisionId: options.referenceRevisionId,
     });
-    this.revisions.set(revision.id, revision);
-    course.latestRevisionId = revision.id;
-    return revision;
+    const savedRevision = await this.revisionRepo.save(revision);
+
+    course.latestRevisionId = savedRevision.id;
+    course.updatedAt = new Date();
+    await this.courseRepo.save(course);
+    return savedRevision;
   }
 }

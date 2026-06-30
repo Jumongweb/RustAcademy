@@ -1,12 +1,124 @@
 import { NotFoundException } from '@nestjs/common';
 import { CourseService } from './course.service';
+import { CourseEntity } from './course.entity';
+import { CourseRevisionEntity } from './course-revision.entity';
 import { CourseLevel } from './interfaces/course-level.enum';
+
+/**
+ * Minimal in-memory mock that imitates the subset of the
+ * `Repository<T>` surface that `CourseService` relies on.  Tests construct
+ * a fresh mock per `beforeEach` so the service runs in isolation.
+ *
+ * `create()` invokes the entity constructor (mirroring real TypeORM
+ * behaviour) so defaults declared in the constructor — e.g.
+ * `isActive ??= true` — still apply to rows stored by the mock.
+ */
+class InMemoryRepository<T extends { id: string }> {
+  protected readonly rows: Map<string, T> = new Map();
+
+  constructor(
+    protected readonly EntityCtor?: new (partial?: Partial<T>) => T,
+  ) {}
+
+  create(partial: Partial<T> = {}): T {
+    if (this.EntityCtor) {
+      return new this.EntityCtor(partial);
+    }
+    return { ...(partial as T) };
+  }
+
+  async save(entity: T): Promise<T> {
+    if (!entity.id) {
+      (entity as T & { id: string }).id = crypto.randomUUID();
+    }
+    const now = new Date();
+    if ('createdAt' in entity && !(entity as { createdAt?: Date }).createdAt) {
+      (entity as { createdAt: Date }).createdAt = now;
+    }
+    if ('updatedAt' in entity) {
+      (entity as { updatedAt: Date }).updatedAt = now;
+    }
+    this.rows.set((entity as T & { id: string }).id, entity);
+    return entity;
+  }
+
+  async find(options: { where?: Partial<T>; order?: { version?: 'ASC' | 'DESC' } } = {}): Promise<T[]> {
+    const matches = Object.values(this.matchRows(options.where ?? {}));
+    if (options.order?.version) {
+      matches.sort((a, b) => {
+        const av = (a as unknown as { version: number }).version;
+        const bv = (b as unknown as { version: number }).version;
+        return options.order!.version === 'ASC' ? av - bv : bv - av;
+      });
+    }
+    return matches;
+  }
+
+  async findOne(options: { where: Partial<T>; order?: { version?: 'ASC' | 'DESC' } }): Promise<T | null> {
+    const [first] = Object.values(this.matchRows(options.where));
+    if (first && options.order?.version) {
+      const all = Object.values(this.matchRows(options.where));
+      return all.sort((a, b) => {
+        const av = (a as unknown as { version: number }).version;
+        const bv = (b as unknown as { version: number }).version;
+        return options.order!.version === 'ASC' ? av - bv : bv - av;
+      })[0];
+    }
+    return first ?? null;
+  }
+
+  async remove(entity: T): Promise<T> {
+    this.rows.delete((entity as T & { id: string }).id);
+    return entity;
+  }
+
+  async count(options: { where?: Partial<T> } = {}): Promise<number> {
+    return Object.values(this.matchRows(options.where ?? {})).length;
+  }
+
+  private matchRows(where: Partial<T>): Record<string, T> {
+    const matches: Record<string, T> = {};
+    for (const [id, row] of this.rows.entries()) {
+      const ok = Object.entries(where as Record<string, unknown>).every(
+        ([key, expected]) => {
+          const actual = (row as Record<string, unknown>)[key];
+          if (Array.isArray(expected)) {
+            return Array.isArray(actual) &&
+              expected.length === actual.length &&
+              expected.every((v, i) => v === (actual as unknown[])[i]);
+          }
+          return actual === expected;
+        },
+      );
+      if (ok) matches[id] = row;
+    }
+    return matches;
+  }
+}
+
+class InMemoryCourseRepo extends InMemoryRepository<CourseEntity> {
+  constructor() {
+    super(CourseEntity);
+  }
+}
+class InMemoryRevisionRepo extends InMemoryRepository<CourseRevisionEntity> {
+  constructor() {
+    super(CourseRevisionEntity);
+  }
+}
 
 describe('CourseService', () => {
   let service: CourseService;
+  let courseRepo: InMemoryCourseRepo;
+  let revisionRepo: InMemoryRevisionRepo;
 
   beforeEach(() => {
-    service = new CourseService();
+    courseRepo = new InMemoryCourseRepo();
+    revisionRepo = new InMemoryRevisionRepo();
+    service = new CourseService(
+      courseRepo as unknown as import('typeorm').Repository<CourseEntity>,
+      revisionRepo as unknown as import('typeorm').Repository<CourseRevisionEntity>,
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -303,7 +415,9 @@ describe('CourseService', () => {
 
     // The course itself is gone
     expect(await service.findById(course.id)).toBeNull();
-    // But the revision snapshot is preserved for audit purposes
+    // But the revision snapshot is preserved (the repo's `remove` only
+    // touches the course row).  This matches the production behaviour where
+    // revisions survive a course deletion for audit purposes.
     const revisions = await service.getRevisions(course.id);
     expect(revisions).toHaveLength(1);
     expect(revisions[0].snapshot.title).toBe('ToDelete');
