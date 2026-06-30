@@ -20,6 +20,7 @@ import { TaskModule } from './tasks/task.module';
 import { ProgressModule } from './courses/progress/progress.module';
 import { AppConfigModule } from './config/config.module';
 import { ContractsModule } from './contracts/contracts.module';
+import { MonitoringModule } from './monitoring/monitoring.module';
 import { SearchModule } from './search/search.module';
 import { PaymentsModule } from './payments/payments.module';
 import { SessionsModule } from './sessions/sessions.module';
@@ -48,6 +49,7 @@ import { SessionsModule } from './sessions/sessions.module';
     OnboardingModule,
     LessonModule,
     TaskModule,
+    MonitoringModule,
     ProgressModule,
     SearchModule,
     PaymentsModule,
