@@ -46,7 +46,6 @@ import { IndexerLagModule } from "./indexer-lag";
 import { SupportBundleModule } from "./support-bundle/support-bundle.module";
 import { getDynamicModules } from "./module-factory";
 import { ChatModule } from "./chat/chat.module";
-import { ReportsModule } from "./reports/reports.module";
 
 // Validate environment variables for module composition.
 // This ensures that feature flags are deterministic and typed.
@@ -112,7 +111,6 @@ const validatedEnv = envSchema.validate(process.env, {
       UsernamesModule,
       MetricsModule,
       AnalyticsModule,
-      ReportsModule,
       LinksModule,
       ScamAlertsModule,
       TransactionsModule,
